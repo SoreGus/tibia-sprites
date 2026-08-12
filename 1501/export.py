@@ -1,131 +1,310 @@
 import json
 import re
 import struct
-import unicodedata
 from pathlib import Path
 
 from PIL import Image
 
 
+# ============================================================
+# PATHS
+# ============================================================
+
+
 DAT_PATH = Path("Tibia.dat")
 SPR_PATH = Path("Tibia.spr")
 
-ASSETS_PATH = Path("assets")
+OUTPUT_PATH = Path("assets")
 METADATA_PATH = Path("metadata.json")
 
-VERSION = "15.01"
+
+# ============================================================
+# FORMAT
+# ============================================================
+
 
 SPRITE_SIZE = 32
-SPRITE_COUNT = 555117
 
 FIRST_ITEM_ID = 100
-MAX_ITEM_ID = 51299
-
 FIRST_CREATURE_ID = 1
-MAX_CREATURE_ID = 1846
+FIRST_EFFECT_ID = 1
+FIRST_MISSILE_ID = 1
 
-DAT_START_OFFSET = 12
+ATTRIBUTE_END = 0xFF
 
-MAX_PROPERTY_BYTES = 8192
-
-RAW_MARKET_ATTRIBUTE = 0x22
-
-
-# ============================================================
-# BASIC READERS
-# ============================================================
-
-
-def u16(
-    data: bytes,
-    offset: int,
-) -> int:
-    return struct.unpack_from(
-        "<H",
-        data,
-        offset,
-    )[0]
-
-
-def u32(
-    data: bytes,
-    offset: int,
-) -> int:
-    return struct.unpack_from(
-        "<I",
-        data,
-        offset,
-    )[0]
-
-
-def i32(
-    data: bytes,
-    offset: int,
-) -> int:
-    return struct.unpack_from(
-        "<i",
-        data,
-        offset,
-    )[0]
+MAX_SPRITES_PER_GRAPHICS = 500000
 
 
 # ============================================================
-# PATH / NAME
+# ATTRIBUTE IDS
+# ============================================================
+
+
+ATTR_GROUND = 0
+ATTR_GROUND_BORDER = 1
+ATTR_ON_BOTTOM = 2
+ATTR_ON_TOP = 3
+ATTR_CONTAINER = 4
+ATTR_STACKABLE = 5
+ATTR_FORCE_USE = 6
+ATTR_MULTI_USE = 7
+ATTR_WRITABLE = 8
+ATTR_WRITABLE_ONCE = 9
+ATTR_FLUID_CONTAINER = 10
+ATTR_SPLASH = 11
+ATTR_NOT_WALKABLE = 12
+ATTR_NOT_MOVEABLE = 13
+ATTR_BLOCK_PROJECTILE = 14
+ATTR_NOT_PATHABLE = 15
+ATTR_PICKUPABLE = 16
+ATTR_HANGABLE = 17
+ATTR_HOOK_SOUTH = 18
+ATTR_HOOK_EAST = 19
+ATTR_ROTATEABLE = 20
+ATTR_LIGHT = 21
+ATTR_DONT_HIDE = 22
+ATTR_TRANSLUCENT = 23
+ATTR_DISPLACEMENT = 24
+ATTR_ELEVATION = 25
+ATTR_LYING_CORPSE = 26
+ATTR_ANIMATE_ALWAYS = 27
+ATTR_MINIMAP_COLOR = 28
+ATTR_LENS_HELP = 29
+ATTR_FULL_GROUND = 30
+ATTR_LOOK = 31
+ATTR_CLOTH = 32
+ATTR_MARKET = 33
+ATTR_USABLE = 34
+ATTR_WRAPABLE = 35
+ATTR_UNWRAPABLE = 36
+ATTR_TOP_EFFECT = 37
+
+ATTR_NO_MOVE_ANIMATION = 253
+
+
+ATTRIBUTE_NAMES = {
+    ATTR_GROUND: "ground",
+    ATTR_GROUND_BORDER: "ground_border",
+    ATTR_ON_BOTTOM: "on_bottom",
+    ATTR_ON_TOP: "on_top",
+    ATTR_CONTAINER: "container",
+    ATTR_STACKABLE: "stackable",
+    ATTR_FORCE_USE: "force_use",
+    ATTR_MULTI_USE: "multi_use",
+    ATTR_WRITABLE: "writable",
+    ATTR_WRITABLE_ONCE: "writable_once",
+    ATTR_FLUID_CONTAINER: "fluid_container",
+    ATTR_SPLASH: "splash",
+    ATTR_NOT_WALKABLE: "not_walkable",
+    ATTR_NOT_MOVEABLE: "not_moveable",
+    ATTR_BLOCK_PROJECTILE: "block_projectile",
+    ATTR_NOT_PATHABLE: "not_pathable",
+    ATTR_PICKUPABLE: "pickupable",
+    ATTR_HANGABLE: "hangable",
+    ATTR_HOOK_SOUTH: "hook_south",
+    ATTR_HOOK_EAST: "hook_east",
+    ATTR_ROTATEABLE: "rotateable",
+    ATTR_LIGHT: "light",
+    ATTR_DONT_HIDE: "dont_hide",
+    ATTR_TRANSLUCENT: "translucent",
+    ATTR_DISPLACEMENT: "displacement",
+    ATTR_ELEVATION: "elevation",
+    ATTR_LYING_CORPSE: "lying_corpse",
+    ATTR_ANIMATE_ALWAYS: "animate_always",
+    ATTR_MINIMAP_COLOR: "minimap_color",
+    ATTR_LENS_HELP: "lens_help",
+    ATTR_FULL_GROUND: "full_ground",
+    ATTR_LOOK: "look",
+    ATTR_CLOTH: "cloth",
+    ATTR_MARKET: "market",
+    ATTR_USABLE: "usable",
+    ATTR_WRAPABLE: "wrapable",
+    ATTR_UNWRAPABLE: "unwrapable",
+    ATTR_TOP_EFFECT: "top_effect",
+    ATTR_NO_MOVE_ANIMATION: "no_move_animation",
+}
+
+
+U16_ATTRIBUTES = {
+    ATTR_GROUND,
+    ATTR_WRITABLE,
+    ATTR_WRITABLE_ONCE,
+    ATTR_ELEVATION,
+    ATTR_MINIMAP_COLOR,
+    ATTR_LENS_HELP,
+    ATTR_CLOTH,
+    ATTR_USABLE,
+}
+
+
+# ============================================================
+# ITEM CLASSIFICATION
+# ============================================================
+
+
+ITEM_CLASSIFICATION_PRIORITY = [
+    "ground",
+    "ground_border",
+    "container",
+    "stackable",
+    "fluid_container",
+    "splash",
+    "writable",
+    "writable_once",
+    "pickupable",
+    "usable",
+]
+
+
+def classify_item(
+    attributes: dict,
+) -> str:
+    for name in ITEM_CLASSIFICATION_PRIORITY:
+        if name in attributes:
+            return name
+
+    return "other"
+
+
+# ============================================================
+# GENERAL HELPERS
 # ============================================================
 
 
 def sanitize_name(
-    name: str,
+    value: str,
 ) -> str:
-    normalized = unicodedata.normalize(
-        "NFKD",
-        name,
-    )
+    value = value.strip().lower()
 
-    ascii_name = normalized.encode(
-        "ascii",
-        "ignore",
-    ).decode(
-        "ascii"
-    )
-
-    ascii_name = ascii_name.lower()
-
-    ascii_name = re.sub(
+    value = re.sub(
         r"[^a-z0-9]+",
         "_",
-        ascii_name,
+        value,
     )
 
-    ascii_name = ascii_name.strip(
+    value = value.strip(
         "_"
     )
 
-    return ascii_name[:80]
+    return value or "unnamed"
 
 
-def build_asset_directory_name(
-    asset_id: int,
-    name: str | None,
+def relative_asset_path(
+    path: Path,
 ) -> str:
-    if not name:
-        return str(
-            asset_id
+    return path.as_posix()
+
+
+# ============================================================
+# BINARY READER
+# ============================================================
+
+
+class Reader:
+    def __init__(
+        self,
+        data: bytes,
+        offset: int = 0,
+    ):
+        self.data = data
+        self.cursor = offset
+
+    def require(
+        self,
+        size: int,
+    ):
+        if self.cursor + size > len(self.data):
+            raise EOFError(
+                f"Unexpected EOF at "
+                f"0x{self.cursor:08X}"
+            )
+
+    def read_u8(
+        self,
+    ) -> int:
+        self.require(1)
+
+        value = self.data[
+            self.cursor
+        ]
+
+        self.cursor += 1
+
+        return value
+
+    def read_u16(
+        self,
+    ) -> int:
+        self.require(2)
+
+        value = struct.unpack_from(
+            "<H",
+            self.data,
+            self.cursor,
+        )[0]
+
+        self.cursor += 2
+
+        return value
+
+    def read_u32(
+        self,
+    ) -> int:
+        self.require(4)
+
+        value = struct.unpack_from(
+            "<I",
+            self.data,
+            self.cursor,
+        )[0]
+
+        self.cursor += 4
+
+        return value
+
+    def read_i32(
+        self,
+    ) -> int:
+        self.require(4)
+
+        value = struct.unpack_from(
+            "<i",
+            self.data,
+            self.cursor,
+        )[0]
+
+        self.cursor += 4
+
+        return value
+
+    def read_bytes(
+        self,
+        size: int,
+    ) -> bytes:
+        self.require(size)
+
+        value = self.data[
+            self.cursor:
+            self.cursor + size
+        ]
+
+        self.cursor += size
+
+        return value
+
+    def read_string(
+        self,
+    ) -> str:
+        length = self.read_u16()
+
+        raw = self.read_bytes(
+            length
         )
 
-    safe_name = sanitize_name(
-        name
-    )
-
-    if not safe_name:
-        return str(
-            asset_id
+        return raw.decode(
+            "utf-8",
+            errors="replace",
         )
-
-    return (
-        f"{asset_id}_"
-        f"{safe_name}"
-    )
 
 
 # ============================================================
@@ -154,7 +333,10 @@ class SprReader:
         self.sprite_count = 0
         self.offsets = []
 
-        self.cache: dict[int, Sprite] = {}
+        self.cache: dict[
+            int,
+            Sprite,
+        ] = {}
 
         self._load_header()
 
@@ -200,7 +382,9 @@ class SprReader:
                 image=self._empty_image(),
             )
 
-            self.cache[0] = sprite
+            self.cache[
+                0
+            ] = sprite
 
             return sprite
 
@@ -260,7 +444,9 @@ class SprReader:
         file,
         offset: int,
     ) -> Image.Image:
-        image = self._empty_image()
+        image = (
+            self._empty_image()
+        )
 
         if offset == 0:
             return image
@@ -273,9 +459,7 @@ class SprReader:
             3
         )
 
-        if len(
-            marker
-        ) != 3:
+        if len(marker) != 3:
             raise EOFError(
                 "Unexpected EOF while "
                 "reading sprite marker."
@@ -292,7 +476,9 @@ class SprReader:
             + data_size
         )
 
-        pixels = image.load()
+        pixels = (
+            image.load()
+        )
 
         pixel_index = 0
 
@@ -336,12 +522,10 @@ class SprReader:
                     3
                 )
 
-                if len(
-                    rgb
-                ) != 3:
+                if len(rgb) != 3:
                     raise EOFError(
-                        "Unexpected EOF while "
-                        "reading sprite RGB."
+                        "Unexpected EOF "
+                        "reading RGB."
                     )
 
                 r, g, b = rgb
@@ -373,17 +557,15 @@ class SprReader:
     @staticmethod
     def _read_u16(
         file,
-    ) -> int:
+    ):
         data = file.read(
             2
         )
 
-        if len(
-            data
-        ) != 2:
+        if len(data) != 2:
             raise EOFError(
-                "Unexpected EOF reading "
-                "uint16."
+                "Unexpected EOF "
+                "reading uint16."
             )
 
         return struct.unpack(
@@ -394,17 +576,15 @@ class SprReader:
     @staticmethod
     def _read_u32(
         file,
-    ) -> int:
+    ):
         data = file.read(
             4
         )
 
-        if len(
-            data
-        ) != 4:
+        if len(data) != 4:
             raise EOFError(
-                "Unexpected EOF reading "
-                "uint32."
+                "Unexpected EOF "
+                "reading uint32."
             )
 
         return struct.unpack(
@@ -414,65 +594,218 @@ class SprReader:
 
 
 # ============================================================
+# ATTRIBUTES
+# ============================================================
+
+
+def remap_attribute(
+    raw_attribute: int,
+) -> int:
+    if raw_attribute == 0x10:
+        return (
+            ATTR_NO_MOVE_ANIMATION
+        )
+
+    if raw_attribute > 0x10:
+        return (
+            raw_attribute - 1
+        )
+
+    return raw_attribute
+
+
+def read_market(
+    reader: Reader,
+):
+    return {
+        "category": reader.read_u16(),
+        "trade_as": reader.read_u16(),
+        "show_as": reader.read_u16(),
+        "name": reader.read_string(),
+        "restrict_vocation": (
+            reader.read_u16()
+        ),
+        "required_level": (
+            reader.read_u16()
+        ),
+    }
+
+
+def read_attribute_payload(
+    reader: Reader,
+    attribute: int,
+):
+    if attribute in U16_ATTRIBUTES:
+        return (
+            reader.read_u16()
+        )
+
+    if attribute == ATTR_LIGHT:
+        return {
+            "intensity": (
+                reader.read_u16()
+            ),
+            "color": (
+                reader.read_u16()
+            ),
+        }
+
+    if (
+        attribute
+        == ATTR_DISPLACEMENT
+    ):
+        return {
+            "x": (
+                reader.read_u16()
+            ),
+            "y": (
+                reader.read_u16()
+            ),
+        }
+
+    if attribute == ATTR_MARKET:
+        return read_market(
+            reader
+        )
+
+    return True
+
+
+def read_attributes(
+    reader: Reader,
+    category: str,
+    thing_id: int,
+):
+    attributes = {}
+
+    raw_attributes = []
+
+    start_offset = (
+        reader.cursor
+    )
+
+    while True:
+        attribute_offset = (
+            reader.cursor
+        )
+
+        raw_attribute = (
+            reader.read_u8()
+        )
+
+        if (
+            raw_attribute
+            == ATTRIBUTE_END
+        ):
+            break
+
+        attribute = (
+            remap_attribute(
+                raw_attribute
+            )
+        )
+
+        if (
+            attribute
+            not in ATTRIBUTE_NAMES
+        ):
+            raise ValueError(
+                f"Unknown attribute "
+                f"0x{raw_attribute:02X} "
+                f"for {category} "
+                f"{thing_id} at "
+                f"0x{attribute_offset:08X}"
+            )
+
+        name = (
+            ATTRIBUTE_NAMES[
+                attribute
+            ]
+        )
+
+        value = (
+            read_attribute_payload(
+                reader=reader,
+                attribute=attribute,
+            )
+        )
+
+        attributes[
+            name
+        ] = value
+
+        raw_attributes.append(
+            {
+                "offset": (
+                    attribute_offset
+                ),
+                "raw_id": (
+                    raw_attribute
+                ),
+                "id": (
+                    attribute
+                ),
+                "name": (
+                    name
+                ),
+                "value": (
+                    value
+                ),
+            }
+        )
+
+    return {
+        "start_offset": (
+            start_offset
+        ),
+        "end_offset": (
+            reader.cursor
+        ),
+        "values": (
+            attributes
+        ),
+        "raw": (
+            raw_attributes
+        ),
+    }
+
+
+# ============================================================
 # ANIMATOR
 # ============================================================
 
 
 def read_animator(
-    data: bytes,
-    cursor: int,
+    reader: Reader,
     frames: int,
 ):
-    if frames <= 1:
-        return (
-            None,
-            cursor,
-        )
-
-    if (
-        cursor + 6
-        > len(data)
-    ):
-        return (
-            None,
-            None,
-        )
-
-    async_animation = data[
-        cursor
-    ]
-
-    cursor += 1
-
-    loop_count = i32(
-        data,
-        cursor,
+    async_animation = (
+        reader.read_u8()
     )
 
-    cursor += 4
+    loop_count = (
+        reader.read_i32()
+    )
 
-    start_phase = data[
-        cursor
-    ]
-
-    cursor += 1
+    start_phase = (
+        reader.read_u8()
+    )
 
     if async_animation not in (
         0,
         1,
     ):
-        return (
-            None,
-            None,
+        raise ValueError(
+            "Invalid animator "
+            f"async value: "
+            f"{async_animation}"
         )
 
-    if (
-        start_phase
-        >= frames
-    ):
-        return (
-            None,
-            None,
+    if start_phase >= frames:
+        raise ValueError(
+            "Invalid animator "
+            f"start phase: "
+            f"{start_phase}"
         )
 
     phases = []
@@ -480,52 +813,32 @@ def read_animator(
     for phase in range(
         frames
     ):
-        if (
-            cursor + 8
-            > len(data)
-        ):
-            return (
-                None,
-                None,
-            )
-
-        min_duration = u32(
-            data,
-            cursor,
+        min_duration = (
+            reader.read_u32()
         )
 
-        cursor += 4
-
-        max_duration = u32(
-            data,
-            cursor,
+        max_duration = (
+            reader.read_u32()
         )
-
-        cursor += 4
 
         if (
             min_duration
             > max_duration
         ):
-            return (
-                None,
-                None,
-            )
-
-        if (
-            max_duration
-            > 600000
-        ):
-            return (
-                None,
-                None,
+            raise ValueError(
+                "Invalid animation "
+                "duration range."
             )
 
         phases.append(
             {
                 "phase": phase,
-                "min_duration": min_duration,
-                "max_duration": max_duration,
+                "min_duration": (
+                    min_duration
+                ),
+                "max_duration": (
+                    max_duration
+                ),
             }
         )
 
@@ -533,10 +846,16 @@ def read_animator(
         "async": bool(
             async_animation
         ),
-        "loop_count": loop_count,
-        "start_phase": start_phase,
-        "phases": phases,
-    }, cursor
+        "loop_count": (
+            loop_count
+        ),
+        "start_phase": (
+            start_phase
+        ),
+        "phases": (
+            phases
+        ),
+    }
 
 
 # ============================================================
@@ -544,39 +863,39 @@ def read_animator(
 # ============================================================
 
 
-def parse_graphics_block(
-    data: bytes,
-    offset: int,
+def read_graphics(
+    reader: Reader,
+    sprite_count_limit: int,
 ):
-    if (
-        offset + 7
-        > len(data)
-    ):
-        return None
+    start_offset = (
+        reader.cursor
+    )
 
-    cursor = offset
+    width = (
+        reader.read_u8()
+    )
 
-    width = data[
-        cursor
-    ]
-
-    cursor += 1
-
-    height = data[
-        cursor
-    ]
-
-    cursor += 1
+    height = (
+        reader.read_u8()
+    )
 
     if not (
         1 <= width <= 8
     ):
-        return None
+        raise ValueError(
+            f"Invalid width "
+            f"{width} at "
+            f"0x{start_offset:08X}"
+        )
 
     if not (
         1 <= height <= 8
     ):
-        return None
+        raise ValueError(
+            f"Invalid height "
+            f"{height} at "
+            f"0x{start_offset:08X}"
+        )
 
     real_size = (
         SPRITE_SIZE
@@ -586,100 +905,79 @@ def parse_graphics_block(
         width > 1
         or height > 1
     ):
-        if (
-            cursor
-            >= len(data)
-        ):
-            return None
+        real_size = (
+            reader.read_u8()
+        )
 
-        real_size = data[
-            cursor
-        ]
+    layers = (
+        reader.read_u8()
+    )
 
-        cursor += 1
+    pattern_x = (
+        reader.read_u8()
+    )
 
-        if not (
-            1
-            <= real_size
-            <= 255
-        ):
-            return None
+    pattern_y = (
+        reader.read_u8()
+    )
 
-    if (
-        cursor + 5
-        > len(data)
-    ):
-        return None
+    pattern_z = (
+        reader.read_u8()
+    )
 
-    layers = data[
-        cursor
-    ]
-
-    cursor += 1
-
-    pattern_x = data[
-        cursor
-    ]
-
-    cursor += 1
-
-    pattern_y = data[
-        cursor
-    ]
-
-    cursor += 1
-
-    pattern_z = data[
-        cursor
-    ]
-
-    cursor += 1
-
-    frames = data[
-        cursor
-    ]
-
-    cursor += 1
+    frames = (
+        reader.read_u8()
+    )
 
     if not (
         1 <= layers <= 8
     ):
-        return None
+        raise ValueError(
+            f"Invalid layers: "
+            f"{layers}"
+        )
 
     if not (
         1 <= pattern_x <= 32
     ):
-        return None
+        raise ValueError(
+            "Invalid pattern_x: "
+            f"{pattern_x}"
+        )
 
     if not (
         1 <= pattern_y <= 32
     ):
-        return None
+        raise ValueError(
+            "Invalid pattern_y: "
+            f"{pattern_y}"
+        )
 
     if not (
         1 <= pattern_z <= 32
     ):
-        return None
+        raise ValueError(
+            "Invalid pattern_z: "
+            f"{pattern_z}"
+        )
 
     if not (
         1 <= frames <= 255
     ):
-        return None
+        raise ValueError(
+            f"Invalid frames: "
+            f"{frames}"
+        )
 
     animator = None
 
     if frames > 1:
-        (
-            animator,
-            cursor,
-        ) = read_animator(
-            data=data,
-            cursor=cursor,
-            frames=frames,
+        animator = (
+            read_animator(
+                reader=reader,
+                frames=frames,
+            )
         )
-
-        if cursor is None:
-            return None
 
     sprite_count = (
         width
@@ -694,65 +992,75 @@ def parse_graphics_block(
     if not (
         1
         <= sprite_count
-        <= 500000
+        <= MAX_SPRITES_PER_GRAPHICS
     ):
-        return None
-
-    sprite_bytes = (
-        sprite_count
-        * 4
-    )
-
-    if (
-        cursor
-        + sprite_bytes
-        > len(data)
-    ):
-        return None
+        raise ValueError(
+            "Invalid sprite count: "
+            f"{sprite_count}"
+        )
 
     sprite_ids = []
 
-    for index in range(
+    for _ in range(
         sprite_count
     ):
-        sprite_id = u32(
-            data,
-            cursor
-            + index * 4,
+        sprite_id = (
+            reader.read_u32()
         )
 
         if (
             sprite_id != 0
             and sprite_id
-            > SPRITE_COUNT
+            > sprite_count_limit
         ):
-            return None
+            raise ValueError(
+                f"Invalid sprite ID: "
+                f"{sprite_id}"
+            )
 
         sprite_ids.append(
             sprite_id
         )
 
     return {
-        "width": width,
-        "height": height,
-        "real_size": real_size,
-
-        "layers": layers,
-
-        "pattern_x": pattern_x,
-        "pattern_y": pattern_y,
-        "pattern_z": pattern_z,
-
-        "frames": frames,
-
-        "animator": animator,
-
-        "sprite_count": sprite_count,
-        "sprite_ids": sprite_ids,
-
+        "offset": (
+            start_offset
+        ),
         "end_offset": (
-            cursor
-            + sprite_bytes
+            reader.cursor
+        ),
+        "width": (
+            width
+        ),
+        "height": (
+            height
+        ),
+        "real_size": (
+            real_size
+        ),
+        "layers": (
+            layers
+        ),
+        "pattern_x": (
+            pattern_x
+        ),
+        "pattern_y": (
+            pattern_y
+        ),
+        "pattern_z": (
+            pattern_z
+        ),
+        "frames": (
+            frames
+        ),
+        "animator": (
+            animator
+        ),
+        "sprite_count": (
+            sprite_count
+        ),
+        "sprite_ids": (
+            sprite_ids
         ),
     }
 
@@ -762,522 +1070,191 @@ def parse_graphics_block(
 # ============================================================
 
 
-def parse_frame_groups(
-    data: bytes,
-    offset: int,
+def read_frame_groups(
+    reader: Reader,
+    sprite_count_limit: int,
 ):
-    if (
-        offset
-        >= len(data)
-    ):
-        return None
-
-    group_count = data[
-        offset
-    ]
+    group_count = (
+        reader.read_u8()
+    )
 
     if not (
-        2
+        1
         <= group_count
         <= 8
     ):
-        return None
-
-    cursor = (
-        offset + 1
-    )
+        raise ValueError(
+            "Invalid frame group "
+            f"count: {group_count}"
+        )
 
     groups = []
 
-    for group_index in range(
+    for index in range(
         group_count
     ):
-        if (
-            cursor
-            >= len(data)
-        ):
-            return None
-
-        group_type = data[
-            cursor
-        ]
-
-        cursor += 1
+        group_type = (
+            reader.read_u8()
+        )
 
         if group_type not in (
             0,
             1,
         ):
-            return None
+            raise ValueError(
+                "Invalid frame group "
+                f"type: {group_type}"
+            )
 
         graphics = (
-            parse_graphics_block(
-                data=data,
-                offset=cursor,
+            read_graphics(
+                reader=reader,
+                sprite_count_limit=(
+                    sprite_count_limit
+                ),
             )
         )
-
-        if graphics is None:
-            return None
 
         groups.append(
             {
-                "index": group_index,
-                "type": group_type,
-                "graphics": graphics,
+                "index": index,
+                "type": (
+                    group_type
+                ),
+                "graphics": (
+                    graphics
+                ),
             }
         )
 
-        cursor = graphics[
-            "end_offset"
-        ]
-
     return {
-        "group_count": group_count,
-        "groups": groups,
-        "end_offset": cursor,
-    }
-
-
-# ============================================================
-# RECORD DETECTION
-# ============================================================
-
-
-def find_record_candidates(
-    data: bytes,
-    record_offset: int,
-):
-    search_end = min(
-        len(data),
-        record_offset
-        + MAX_PROPERTY_BYTES,
-    )
-
-    candidates = []
-
-    for ff_offset in range(
-        record_offset,
-        search_end,
-    ):
-        if (
-            data[
-                ff_offset
-            ]
-            != 0xFF
-        ):
-            continue
-
-        payload_offset = (
-            ff_offset + 1
-        )
-
-        graphics = (
-            parse_graphics_block(
-                data=data,
-                offset=payload_offset,
-            )
-        )
-
-        if (
-            graphics
-            is not None
-        ):
-            candidates.append(
-                {
-                    "type": "single",
-                    "ff_offset": ff_offset,
-                    "end_offset": graphics[
-                        "end_offset"
-                    ],
-                    "graphics": graphics,
-                }
-            )
-
-        frame_groups = (
-            parse_frame_groups(
-                data=data,
-                offset=payload_offset,
-            )
-        )
-
-        if (
-            frame_groups
-            is not None
-        ):
-            candidates.append(
-                {
-                    "type": "groups",
-                    "ff_offset": ff_offset,
-                    "end_offset": frame_groups[
-                        "end_offset"
-                    ],
-                    "frame_groups": frame_groups,
-                }
-            )
-
-    return candidates
-
-
-def choose_candidate(
-    candidates: list[dict],
-):
-    if not candidates:
-        return None
-
-    return sorted(
-        candidates,
-        key=lambda candidate: (
-            candidate[
-                "ff_offset"
-            ],
-            0
-            if candidate[
-                "type"
-            ] == "groups"
-            else 1,
+        "group_count": (
+            group_count
         ),
-    )[0]
-
-
-# ============================================================
-# STRINGS / MARKET METADATA
-# ============================================================
-
-
-def decode_string(
-    raw: bytes,
-):
-    try:
-        text = raw.decode(
-            "utf-8"
-        )
-
-    except UnicodeDecodeError:
-        return None
-
-    if not text:
-        return None
-
-    if not all(
-        character.isprintable()
-        or character
-        in "\t\r\n"
-        for character in text
-    ):
-        return None
-
-    return text
-
-
-def try_parse_market(
-    properties: bytes,
-    offset: int,
-):
-    cursor = (
-        offset + 1
-    )
-
-    if (
-        cursor + 8
-        > len(properties)
-    ):
-        return None
-
-    category = u16(
-        properties,
-        cursor,
-    )
-
-    cursor += 2
-
-    trade_as = u16(
-        properties,
-        cursor,
-    )
-
-    cursor += 2
-
-    show_as = u16(
-        properties,
-        cursor,
-    )
-
-    cursor += 2
-
-    name_length = u16(
-        properties,
-        cursor,
-    )
-
-    cursor += 2
-
-    if not (
-        1
-        <= name_length
-        <= 512
-    ):
-        return None
-
-    if (
-        cursor
-        + name_length
-        + 4
-        > len(properties)
-    ):
-        return None
-
-    raw_name = properties[
-        cursor:
-        cursor + name_length
-    ]
-
-    name = decode_string(
-        raw_name
-    )
-
-    if name is None:
-        return None
-
-    cursor += (
-        name_length
-    )
-
-    restrict_vocation = u16(
-        properties,
-        cursor,
-    )
-
-    cursor += 2
-
-    required_level = u16(
-        properties,
-        cursor,
-    )
-
-    cursor += 2
-
-    return {
-        "name": name,
-        "category": category,
-        "trade_as": trade_as,
-        "show_as": show_as,
-        "restrict_vocation": restrict_vocation,
-        "required_level": required_level,
+        "groups": (
+            groups
+        ),
     }
 
 
-def find_market_metadata(
-    properties: bytes,
-):
-    for offset, value in enumerate(
-        properties
-    ):
-        if (
-            value
-            != RAW_MARKET_ATTRIBUTE
-        ):
-            continue
-
-        market = try_parse_market(
-            properties=properties,
-            offset=offset,
-        )
-
-        if market is not None:
-            return market
-
-    return None
-
-
-def find_length_prefixed_strings(
-    properties: bytes,
-):
-    strings = []
-
-    seen = set()
-
-    for offset in range(
-        max(
-            0,
-            len(properties) - 2,
-        )
-    ):
-        length = u16(
-            properties,
-            offset,
-        )
-
-        if not (
-            2
-            <= length
-            <= 256
-        ):
-            continue
-
-        start = (
-            offset + 2
-        )
-
-        end = (
-            start + length
-        )
-
-        if (
-            end
-            > len(properties)
-        ):
-            continue
-
-        text = decode_string(
-            properties[
-                start:end
-            ]
-        )
-
-        if text is None:
-            continue
-
-        if not any(
-            character.isalpha()
-            for character in text
-        ):
-            continue
-
-        if text in seen:
-            continue
-
-        seen.add(
-            text
-        )
-
-        strings.append(
-            text
-        )
-
-    return strings
-
-
 # ============================================================
-# PARSE RECORDS
+# DAT
 # ============================================================
 
 
-def build_record(
-    data: bytes,
+def read_record(
+    reader: Reader,
+    category: str,
     thing_id: int,
-    category: str,
-    record_offset: int,
-    candidate: dict,
+    sprite_count_limit: int,
 ):
-    ff_offset = candidate[
-        "ff_offset"
-    ]
+    start_offset = (
+        reader.cursor
+    )
 
-    properties = data[
-        record_offset:
-        ff_offset
-    ]
-
-    market = (
-        find_market_metadata(
-            properties
+    attributes = (
+        read_attributes(
+            reader=reader,
+            category=category,
+            thing_id=thing_id,
         )
     )
 
-    strings = (
-        find_length_prefixed_strings(
-            properties
+    if category == "creatures":
+        frame_groups = (
+            read_frame_groups(
+                reader=reader,
+                sprite_count_limit=(
+                    sprite_count_limit
+                ),
+            )
         )
-    )
 
-    name = (
-        market[
-            "name"
-        ]
-        if market
-        else None
+        return {
+            "id": thing_id,
+            "category": (
+                category
+            ),
+            "offset": (
+                start_offset
+            ),
+            "end_offset": (
+                reader.cursor
+            ),
+            "attributes": (
+                attributes
+            ),
+            "type": (
+                "frame_groups"
+            ),
+            "frame_groups": (
+                frame_groups
+            ),
+        }
+
+    graphics = (
+        read_graphics(
+            reader=reader,
+            sprite_count_limit=(
+                sprite_count_limit
+            ),
+        )
     )
 
     return {
-        "id": thing_id,
-        "category": category,
-        "name": name,
-        "market": market,
-        "strings": strings,
-
-        "offset": record_offset,
-
-        "properties_end": ff_offset,
-
-        "raw_properties": (
-            properties.hex(
-                " "
-            )
+        "id": (
+            thing_id
         ),
-
-        **candidate,
+        "category": (
+            category
+        ),
+        "offset": (
+            start_offset
+        ),
+        "end_offset": (
+            reader.cursor
+        ),
+        "attributes": (
+            attributes
+        ),
+        "type": (
+            "single"
+        ),
+        "graphics": (
+            graphics
+        ),
     }
 
 
-def parse_section(
-    data: bytes,
-    category: str,
-    first_id: int,
-    last_id: int,
-    offset: int,
+def parse_dat(
+    sprite_count_limit: int,
 ):
-    records = []
-
-    for thing_id in range(
-        first_id,
-        last_id + 1,
-    ):
-        candidate = (
-            choose_candidate(
-                find_record_candidates(
-                    data=data,
-                    record_offset=offset,
-                )
-            )
-        )
-
-        if candidate is None:
-            raise ValueError(
-                f"Could not parse "
-                f"{category} "
-                f"{thing_id} at "
-                f"0x{offset:08X}"
-            )
-
-        record = build_record(
-            data=data,
-            thing_id=thing_id,
-            category=category,
-            record_offset=offset,
-            candidate=candidate,
-        )
-
-        records.append(
-            record
-        )
-
-        offset = candidate[
-            "end_offset"
-        ]
-
-    return (
-        records,
-        offset,
+    data = (
+        DAT_PATH.read_bytes()
     )
 
+    reader = Reader(
+        data=data,
+    )
 
-def parse_dat():
-    data = DAT_PATH.read_bytes()
+    signature = (
+        reader.read_u32()
+    )
 
-    signature = u32(
-        data,
-        0,
+    max_item_id = (
+        reader.read_u16()
+    )
+
+    max_creature_id = (
+        reader.read_u16()
+    )
+
+    max_effect_id = (
+        reader.read_u16()
+    )
+
+    max_missile_id = (
+        reader.read_u16()
     )
 
     print(
@@ -1285,78 +1262,146 @@ def parse_dat():
         f"0x{signature:08X}"
     )
 
-    offset = (
-        DAT_START_OFFSET
+    print(
+        f"Max item ID:     "
+        f"{max_item_id}"
     )
 
     print(
-        "Parsing items..."
-    )
-
-    (
-        items,
-        offset,
-    ) = parse_section(
-        data=data,
-        category="items",
-        first_id=FIRST_ITEM_ID,
-        last_id=MAX_ITEM_ID,
-        offset=offset,
+        f"Max creature ID: "
+        f"{max_creature_id}"
     )
 
     print(
-        f"Items parsed: "
-        f"{len(items)}"
+        f"Max effect ID:   "
+        f"{max_effect_id}"
     )
 
     print(
-        f"Creature section: "
-        f"0x{offset:08X}"
+        f"Max missile ID:  "
+        f"{max_missile_id}"
     )
 
-    print(
-        "Parsing creatures..."
-    )
+    records = {
+        "items": [],
+        "creatures": [],
+        "effects": [],
+        "missiles": [],
+    }
 
-    (
-        creatures,
-        offset,
-    ) = parse_section(
-        data=data,
-        category="creatures",
-        first_id=FIRST_CREATURE_ID,
-        last_id=MAX_CREATURE_ID,
-        offset=offset,
-    )
+    sections = [
+        (
+            "items",
+            FIRST_ITEM_ID,
+            max_item_id,
+        ),
+        (
+            "creatures",
+            FIRST_CREATURE_ID,
+            max_creature_id,
+        ),
+        (
+            "effects",
+            FIRST_EFFECT_ID,
+            max_effect_id,
+        ),
+        (
+            "missiles",
+            FIRST_MISSILE_ID,
+            max_missile_id,
+        ),
+    ]
 
-    print(
-        f"Creatures parsed: "
-        f"{len(creatures)}"
-    )
+    for (
+        category,
+        first_id,
+        last_id,
+    ) in sections:
+        print()
 
-    print(
-        f"Final DAT offset: "
-        f"0x{offset:08X}"
-    )
+        print(
+            f"Parsing "
+            f"{category}..."
+        )
 
-    print(
-        f"DAT EOF:          "
-        f"0x{len(data):08X}"
-    )
+        total = (
+            last_id
+            - first_id
+            + 1
+        )
+
+        for index, thing_id in enumerate(
+            range(
+                first_id,
+                last_id + 1,
+            ),
+            start=1,
+        ):
+            record = (
+                read_record(
+                    reader=reader,
+                    category=category,
+                    thing_id=thing_id,
+                    sprite_count_limit=(
+                        sprite_count_limit
+                    ),
+                )
+            )
+
+            records[
+                category
+            ].append(
+                record
+            )
+
+            step = (
+                1000
+                if category == "items"
+                else 100
+            )
+
+            if (
+                index % step
+                == 0
+            ):
+                print(
+                    f"  "
+                    f"{index}/{total} "
+                    f"| ID {thing_id} "
+                    f"| offset "
+                    f"0x{reader.cursor:08X}"
+                )
 
     if (
-        offset
+        reader.cursor
         != len(data)
     ):
         raise ValueError(
             "DAT parser did not "
-            "finish exactly at EOF."
+            "finish exactly at EOF. "
+            f"Cursor=0x{reader.cursor:08X}, "
+            f"EOF=0x{len(data):08X}"
         )
 
     return {
-        "signature": signature,
-        "items": items,
-        "creatures": creatures,
+        "signature": (
+            signature
+        ),
+        "max_item_id": (
+            max_item_id
+        ),
+        "max_creature_id": (
+            max_creature_id
+        ),
+        "max_effect_id": (
+            max_effect_id
+        ),
+        "max_missile_id": (
+            max_missile_id
+        ),
+        "records": (
+            records
+        ),
     }
 
 
@@ -1424,15 +1469,111 @@ def compose_tiles(
 
 
 # ============================================================
+# ASSET PATHS
+# ============================================================
+
+
+def get_record_name(
+    record: dict,
+):
+    attributes = record[
+        "attributes"
+    ][
+        "values"
+    ]
+
+    market = attributes.get(
+        "market"
+    )
+
+    if (
+        isinstance(
+            market,
+            dict,
+        )
+        and market.get(
+            "name"
+        )
+    ):
+        return market[
+            "name"
+        ]
+
+    return None
+
+
+def build_asset_dir(
+    record: dict,
+):
+    category = record[
+        "category"
+    ]
+
+    thing_id = record[
+        "id"
+    ]
+
+    name = get_record_name(
+        record
+    )
+
+    if name:
+        directory_name = (
+            f"{thing_id}_"
+            f"{sanitize_name(name)}"
+        )
+
+    else:
+        directory_name = str(
+            thing_id
+        )
+
+    if category == "items":
+        attributes = record[
+            "attributes"
+        ][
+            "values"
+        ]
+
+        item_type = classify_item(
+            attributes
+        )
+
+        return (
+            OUTPUT_PATH
+            / "items"
+            / item_type
+            / directory_name
+        )
+
+    return (
+        OUTPUT_PATH
+        / category
+        / directory_name
+    )
+
+
+# ============================================================
 # GRAPHICS EXPORT
 # ============================================================
 
 
-def export_graphics_block(
+def export_graphics(
     graphics: dict,
     output_dir: Path,
     spr_reader: SprReader,
 ):
+    sprite_ids = graphics[
+        "sprite_ids"
+    ]
+
+    if all(
+        sprite_id == 0
+        for sprite_id
+        in sprite_ids
+    ):
+        return 0
+
     output_dir.mkdir(
         parents=True,
         exist_ok=True,
@@ -1472,10 +1613,6 @@ def export_graphics_block(
         "frames"
     ]
 
-    sprite_ids = graphics[
-        "sprite_ids"
-    ]
-
     tiles_per_image = (
         width
         * height
@@ -1499,11 +1636,13 @@ def export_graphics_block(
                     for layer in range(
                         layers
                     ):
-                        group = sprite_ids[
-                            index:
-                            index
-                            + tiles_per_image
-                        ]
+                        group = (
+                            sprite_ids[
+                                index:
+                                index
+                                + tiles_per_image
+                            ]
+                        )
 
                         index += (
                             tiles_per_image
@@ -1511,23 +1650,35 @@ def export_graphics_block(
 
                         if all(
                             sprite_id == 0
-                            for sprite_id in group
+                            for sprite_id
+                            in group
                         ):
                             continue
 
-                        image = compose_tiles(
-                            spr_reader=spr_reader,
-                            sprite_ids=group,
-                            width=width,
-                            height=height,
+                        image = (
+                            compose_tiles(
+                                spr_reader=(
+                                    spr_reader
+                                ),
+                                sprite_ids=(
+                                    group
+                                ),
+                                width=width,
+                                height=height,
+                            )
                         )
 
                         filename = (
-                            f"frame_{frame:03d}_"
-                            f"x_{pattern_x:02d}_"
-                            f"y_{pattern_y:02d}_"
-                            f"z_{pattern_z:02d}_"
-                            f"layer_{layer:02d}.png"
+                            f"frame_"
+                            f"{frame:03d}_"
+                            f"x_"
+                            f"{pattern_x:02d}_"
+                            f"y_"
+                            f"{pattern_y:02d}_"
+                            f"z_"
+                            f"{pattern_z:02d}_"
+                            f"layer_"
+                            f"{layer:02d}.png"
                         )
 
                         image.save(
@@ -1541,31 +1692,8 @@ def export_graphics_block(
 
 
 # ============================================================
-# ASSET EXPORT
+# RECORD EXPORT
 # ============================================================
-
-
-def get_asset_directory(
-    record: dict,
-) -> Path:
-    directory_name = (
-        build_asset_directory_name(
-            asset_id=record[
-                "id"
-            ],
-            name=record[
-                "name"
-            ],
-        )
-    )
-
-    return (
-        ASSETS_PATH
-        / record[
-            "category"
-        ]
-        / directory_name
-    )
 
 
 def export_record(
@@ -1573,10 +1701,12 @@ def export_record(
     spr_reader: SprReader,
 ):
     asset_dir = (
-        get_asset_directory(
+        build_asset_dir(
             record
         )
     )
+
+    exported = 0
 
     if (
         record[
@@ -1584,231 +1714,252 @@ def export_record(
         ]
         == "single"
     ):
-        graphics = record[
-            "graphics"
-        ]
-
-        if all(
-            sprite_id == 0
-            for sprite_id in graphics[
-                "sprite_ids"
-            ]
-        ):
-            return (
-                asset_dir,
-                0,
-            )
-
         exported = (
-            export_graphics_block(
-                graphics=graphics,
+            export_graphics(
+                graphics=record[
+                    "graphics"
+                ],
                 output_dir=asset_dir,
-                spr_reader=spr_reader,
+                spr_reader=(
+                    spr_reader
+                ),
             )
         )
 
-        return (
-            asset_dir,
-            exported,
-        )
-
-    total_exported = 0
-
-    frame_groups = record[
-        "frame_groups"
-    ]
-
-    for group in frame_groups[
-        "groups"
-    ]:
-        graphics = group[
-            "graphics"
-        ]
-
-        if all(
-            sprite_id == 0
-            for sprite_id in graphics[
-                "sprite_ids"
-            ]
-        ):
-            continue
-
-        group_dir = (
-            asset_dir
-            / (
-                f"group_"
-                f"{group['index']:02d}_"
-                f"type_{group['type']}"
+    else:
+        for group in record[
+            "frame_groups"
+        ][
+            "groups"
+        ]:
+            group_dir = (
+                asset_dir
+                / (
+                    f"group_"
+                    f"{group['index']:02d}_"
+                    f"type_"
+                    f"{group['type']}"
+                )
             )
-        )
 
-        total_exported += (
-            export_graphics_block(
-                graphics=graphics,
-                output_dir=group_dir,
-                spr_reader=spr_reader,
+            exported += (
+                export_graphics(
+                    graphics=group[
+                        "graphics"
+                    ],
+                    output_dir=(
+                        group_dir
+                    ),
+                    spr_reader=(
+                        spr_reader
+                    ),
+                )
             )
-        )
 
     return (
+        exported,
         asset_dir,
-        total_exported,
     )
 
 
 # ============================================================
-# METADATA
+# METADATA SERIALIZATION
 # ============================================================
 
 
-def graphics_metadata(
+def clean_graphics_metadata(
     graphics: dict,
 ):
     return {
-        "width": graphics[
-            "width"
-        ],
-        "height": graphics[
-            "height"
-        ],
-        "real_size": graphics[
-            "real_size"
-        ],
-
-        "layers": graphics[
-            "layers"
-        ],
-
-        "pattern_x": graphics[
-            "pattern_x"
-        ],
-        "pattern_y": graphics[
-            "pattern_y"
-        ],
-        "pattern_z": graphics[
-            "pattern_z"
-        ],
-
-        "frames": graphics[
-            "frames"
-        ],
-
-        "sprite_count": graphics[
-            "sprite_count"
-        ],
-
-        "sprite_ids": graphics[
-            "sprite_ids"
-        ],
-
-        "animator": graphics[
-            "animator"
-        ],
+        "width": (
+            graphics[
+                "width"
+            ]
+        ),
+        "height": (
+            graphics[
+                "height"
+            ]
+        ),
+        "real_size": (
+            graphics[
+                "real_size"
+            ]
+        ),
+        "layers": (
+            graphics[
+                "layers"
+            ]
+        ),
+        "pattern_x": (
+            graphics[
+                "pattern_x"
+            ]
+        ),
+        "pattern_y": (
+            graphics[
+                "pattern_y"
+            ]
+        ),
+        "pattern_z": (
+            graphics[
+                "pattern_z"
+            ]
+        ),
+        "frames": (
+            graphics[
+                "frames"
+            ]
+        ),
+        "sprite_count": (
+            graphics[
+                "sprite_count"
+            ]
+        ),
+        "sprite_ids": (
+            graphics[
+                "sprite_ids"
+            ]
+        ),
+        "animator": (
+            graphics[
+                "animator"
+            ]
+        ),
     }
 
 
-def record_metadata(
+def build_record_metadata(
     record: dict,
     asset_dir: Path,
     exported_pngs: int,
 ):
+    name = (
+        get_record_name(
+            record
+        )
+    )
+
+    attributes = (
+        record[
+            "attributes"
+        ][
+            "values"
+        ]
+    )
+
     metadata = {
-        "id": record[
-            "id"
-        ],
-
-        "category": record[
-            "category"
-        ],
-
-        "name": record[
-            "name"
-        ],
-
-        "asset_path": (
-            asset_dir.as_posix()
+        "id": (
+            record[
+                "id"
+            ]
         ),
-
+        "category": (
+            record[
+                "category"
+            ]
+        ),
+        "name": (
+            name
+        ),
+        "asset_path": (
+            relative_asset_path(
+                asset_dir
+            )
+        ),
         "exported_pngs": (
             exported_pngs
         ),
-
-        "market": (
+        "attributes": (
+            attributes
+        ),
+        "raw_attributes": (
             record[
-                "market"
+                "attributes"
+            ][
+                "raw"
             ]
         ),
-
-        "strings": (
-            record[
-                "strings"
-            ]
-        ),
-
         "dat": {
-            "offset": record[
-                "offset"
-            ],
-
-            "properties_end": record[
-                "properties_end"
-            ],
-
-            "end_offset": record[
-                "end_offset"
-            ],
-
-            "record_type": record[
-                "type"
-            ],
-
-            "raw_properties": record[
-                "raw_properties"
-            ],
+            "offset": (
+                record[
+                    "offset"
+                ]
+            ),
+            "end_offset": (
+                record[
+                    "end_offset"
+                ]
+            ),
+            "record_type": (
+                record[
+                    "type"
+                ]
+            ),
         },
     }
 
     if (
         record[
+            "category"
+        ]
+        == "items"
+    ):
+        metadata[
+            "asset_type"
+        ] = classify_item(
+            attributes
+        )
+
+    if (
+        record[
             "type"
         ]
         == "single"
     ):
         metadata[
             "graphics"
-        ] = graphics_metadata(
-            record[
-                "graphics"
-            ]
+        ] = (
+            clean_graphics_metadata(
+                record[
+                    "graphics"
+                ]
+            )
         )
 
     else:
         metadata[
             "frame_groups"
-        ] = [
-            {
-                "index": group[
-                    "index"
-                ],
+        ] = []
 
-                "type": group[
-                    "type"
-                ],
-
-                "graphics": (
-                    graphics_metadata(
-                        group[
-                            "graphics"
-                        ]
-                    )
-                ),
-            }
-            for group in record[
+        for group in record[
+            "frame_groups"
+        ][
+            "groups"
+        ]:
+            metadata[
                 "frame_groups"
-            ][
-                "groups"
-            ]
-        ]
+            ].append(
+                {
+                    "index": (
+                        group[
+                            "index"
+                        ]
+                    ),
+                    "type": (
+                        group[
+                            "type"
+                        ]
+                    ),
+                    "graphics": (
+                        clean_graphics_metadata(
+                            group[
+                                "graphics"
+                            ]
+                        )
+                    ),
+                }
+            )
 
     return metadata
 
@@ -1822,39 +1973,34 @@ def export_all(
     parsed: dict,
     spr_reader: SprReader,
 ):
-    metadata = {
-        "version": VERSION,
-
-        "dat_signature": (
-            f"0x"
-            f"{parsed['signature']:08X}"
-        ),
-
-        "spr_signature": (
-            f"0x"
-            f"{spr_reader.signature:08X}"
-        ),
-
-        "sprite_count": (
-            spr_reader.sprite_count
-        ),
-
+    metadata_records = {
         "items": [],
-
         "creatures": [],
+        "effects": [],
+        "missiles": [],
     }
 
     total_assets = 0
     exported_assets = 0
-    pngs_exported = 0
+    total_pngs = 0
 
-    for category in (
+    categories = [
         "items",
         "creatures",
-    ):
+        "effects",
+        "missiles",
+    ]
+
+    for category in categories:
+        records = parsed[
+            "records"
+        ][
+            category
+        ]
+
         print()
         print(
-            "=" * 70
+            "=" * 72
         )
 
         print(
@@ -1862,12 +2008,8 @@ def export_all(
         )
 
         print(
-            "=" * 70
+            "=" * 72
         )
-
-        records = parsed[
-            category
-        ]
 
         total = len(
             records
@@ -1880,48 +2022,147 @@ def export_all(
             total_assets += 1
 
             (
+                exported_pngs,
                 asset_dir,
-                exported,
             ) = export_record(
                 record=record,
-                spr_reader=spr_reader,
+                spr_reader=(
+                    spr_reader
+                ),
             )
 
-            if exported > 0:
+            if exported_pngs > 0:
                 exported_assets += 1
-                pngs_exported += exported
+                total_pngs += (
+                    exported_pngs
+                )
 
-            metadata[
-                category
-            ].append(
-                record_metadata(
+            metadata = (
+                build_record_metadata(
                     record=record,
-                    asset_dir=asset_dir,
-                    exported_pngs=exported,
+                    asset_dir=(
+                        asset_dir
+                    ),
+                    exported_pngs=(
+                        exported_pngs
+                    ),
                 )
             )
 
-            display_name = (
-                record[
-                    "name"
-                ]
-                or "-"
+            metadata_records[
+                category
+            ].append(
+                metadata
             )
 
-            print(
-                f"[{index}/{total}] "
-                f"{category} "
-                f"{record['id']} "
-                f"({display_name}): "
-                f"{exported} PNG(s)"
+            step = (
+                500
+                if category
+                == "items"
+                else 50
             )
+
+            if (
+                index % step
+                == 0
+                or index == total
+            ):
+                print(
+                    f"  "
+                    f"{index}/{total} "
+                    f"| ID "
+                    f"{record['id']} "
+                    f"| PNGs "
+                    f"{exported_pngs}"
+                )
 
     return (
-        metadata,
+        metadata_records,
         total_assets,
         exported_assets,
-        pngs_exported,
+        total_pngs,
     )
+
+
+# ============================================================
+# METADATA FILE
+# ============================================================
+
+
+def save_metadata(
+    parsed: dict,
+    metadata_records: dict,
+    spr_reader: SprReader,
+):
+    output = {
+        "version": (
+            "15.01"
+        ),
+        "dat_signature": (
+            f"0x"
+            f"{parsed['signature']:08X}"
+        ),
+        "spr_signature": (
+            f"0x"
+            f"{spr_reader.signature:08X}"
+        ),
+        "sprite_count": (
+            spr_reader.sprite_count
+        ),
+        "max_ids": {
+            "items": (
+                parsed[
+                    "max_item_id"
+                ]
+            ),
+            "creatures": (
+                parsed[
+                    "max_creature_id"
+                ]
+            ),
+            "effects": (
+                parsed[
+                    "max_effect_id"
+                ]
+            ),
+            "missiles": (
+                parsed[
+                    "max_missile_id"
+                ]
+            ),
+        },
+        "items": (
+            metadata_records[
+                "items"
+            ]
+        ),
+        "creatures": (
+            metadata_records[
+                "creatures"
+            ]
+        ),
+        "effects": (
+            metadata_records[
+                "effects"
+            ]
+        ),
+        "missiles": (
+            metadata_records[
+                "missiles"
+            ]
+        ),
+    }
+
+    with METADATA_PATH.open(
+        "w",
+        encoding="utf-8",
+    ) as file:
+        json.dump(
+            output,
+            file,
+            indent=2,
+            ensure_ascii=False,
+        )
 
 
 # ============================================================
@@ -1943,16 +2184,18 @@ def main():
         )
 
     print(
-        f"DAT: {DAT_PATH}"
+        f"DAT: "
+        f"{DAT_PATH}"
     )
 
     print(
-        f"SPR: {SPR_PATH}"
+        f"SPR: "
+        f"{SPR_PATH}"
     )
 
     print(
         f"Assets: "
-        f"{ASSETS_PATH.resolve()}"
+        f"{OUTPUT_PATH.resolve()}"
     )
 
     print(
@@ -1966,13 +2209,16 @@ def main():
         "Reading SPR..."
     )
 
-    spr_reader = SprReader(
-        SPR_PATH
+    spr_reader = (
+        SprReader(
+            SPR_PATH
+        )
     )
 
     print(
         f"SPR signature: "
-        f"0x{spr_reader.signature:08X}"
+        f"0x"
+        f"{spr_reader.signature:08X}"
     )
 
     print(
@@ -1980,73 +2226,64 @@ def main():
         f"{spr_reader.sprite_count}"
     )
 
-    if (
-        spr_reader.sprite_count
-        != SPRITE_COUNT
-    ):
-        raise ValueError(
-            "Unexpected SPR sprite count: "
-            f"{spr_reader.sprite_count}. "
-            f"Expected {SPRITE_COUNT}."
-        )
-
     print()
+
     print(
         "Parsing DAT..."
     )
 
-    parsed = parse_dat()
+    parsed = parse_dat(
+        sprite_count_limit=(
+            spr_reader.sprite_count
+        )
+    )
 
     print()
     print(
-        "DAT parsed successfully."
+        "DAT parsed successfully "
+        "to EOF."
     )
 
-    print(
-        f"Items: "
-        f"{len(parsed['items'])}"
-    )
-
-    print(
-        f"Creatures: "
-        f"{len(parsed['creatures'])}"
-    )
-
-    ASSETS_PATH.mkdir(
+    OUTPUT_PATH.mkdir(
         parents=True,
         exist_ok=True,
     )
 
     print()
     print(
-        "Exporting assets "
-        "and building metadata..."
+        "Exporting assets..."
     )
 
     (
-        metadata,
+        metadata_records,
         total_assets,
         exported_assets,
-        pngs_exported,
+        total_pngs,
     ) = export_all(
         parsed=parsed,
-        spr_reader=spr_reader,
+        spr_reader=(
+            spr_reader
+        ),
     )
-
-    with METADATA_PATH.open(
-        "w",
-        encoding="utf-8",
-    ) as file:
-        json.dump(
-            metadata,
-            file,
-            indent=2,
-            ensure_ascii=False,
-        )
 
     print()
     print(
-        "=" * 70
+        "Saving metadata..."
+    )
+
+    save_metadata(
+        parsed=parsed,
+        metadata_records=(
+            metadata_records
+        ),
+        spr_reader=(
+            spr_reader
+        ),
+    )
+
+    print()
+    print(
+        "=" * 72
     )
 
     print(
@@ -2054,7 +2291,7 @@ def main():
     )
 
     print(
-        "=" * 70
+        "=" * 72
     )
 
     print(
@@ -2069,12 +2306,12 @@ def main():
 
     print(
         f"PNGs exported:    "
-        f"{pngs_exported}"
+        f"{total_pngs}"
     )
 
     print(
-        f"Assets:           "
-        f"{ASSETS_PATH.resolve()}"
+        f"Assets path:      "
+        f"{OUTPUT_PATH.resolve()}"
     )
 
     print(
