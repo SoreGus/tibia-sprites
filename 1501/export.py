@@ -1,10 +1,9 @@
-import json
 import re
+import shutil
 import struct
 from pathlib import Path
 
 from PIL import Image
-
 
 # ============================================================
 # PATHS
@@ -15,7 +14,6 @@ DAT_PATH = Path("Tibia.dat")
 SPR_PATH = Path("Tibia.spr")
 
 OUTPUT_PATH = Path("assets")
-METADATA_PATH = Path("metadata.json")
 
 
 # ============================================================
@@ -186,13 +184,10 @@ def sanitize_name(
         "_"
     )
 
-    return value or "unnamed"
-
-
-def relative_asset_path(
-    path: Path,
-) -> str:
-    return path.as_posix()
+    return (
+        value
+        or "unnamed"
+    )
 
 
 # ============================================================
@@ -213,7 +208,10 @@ class Reader:
         self,
         size: int,
     ):
-        if self.cursor + size > len(self.data):
+        if (
+            self.cursor + size
+            > len(self.data)
+        ):
             raise EOFError(
                 f"Unexpected EOF at "
                 f"0x{self.cursor:08X}"
@@ -222,7 +220,9 @@ class Reader:
     def read_u8(
         self,
     ) -> int:
-        self.require(1)
+        self.require(
+            1
+        )
 
         value = self.data[
             self.cursor
@@ -235,7 +235,9 @@ class Reader:
     def read_u16(
         self,
     ) -> int:
-        self.require(2)
+        self.require(
+            2
+        )
 
         value = struct.unpack_from(
             "<H",
@@ -250,7 +252,9 @@ class Reader:
     def read_u32(
         self,
     ) -> int:
-        self.require(4)
+        self.require(
+            4
+        )
 
         value = struct.unpack_from(
             "<I",
@@ -265,7 +269,9 @@ class Reader:
     def read_i32(
         self,
     ) -> int:
-        self.require(4)
+        self.require(
+            4
+        )
 
         value = struct.unpack_from(
             "<i",
@@ -281,7 +287,9 @@ class Reader:
         self,
         size: int,
     ) -> bytes:
-        self.require(size)
+        self.require(
+            size
+        )
 
         value = self.data[
             self.cursor:
@@ -295,10 +303,14 @@ class Reader:
     def read_string(
         self,
     ) -> str:
-        length = self.read_u16()
+        length = (
+            self.read_u16()
+        )
 
-        raw = self.read_bytes(
-            length
+        raw = (
+            self.read_bytes(
+                length
+            )
         )
 
         return raw.decode(
@@ -459,7 +471,9 @@ class SprReader:
             3
         )
 
-        if len(marker) != 3:
+        if len(
+            marker
+        ) != 3:
             raise EOFError(
                 "Unexpected EOF while "
                 "reading sprite marker."
@@ -522,7 +536,9 @@ class SprReader:
                     3
                 )
 
-                if len(rgb) != 3:
+                if len(
+                    rgb
+                ) != 3:
                     raise EOFError(
                         "Unexpected EOF "
                         "reading RGB."
@@ -562,7 +578,9 @@ class SprReader:
             2
         )
 
-        if len(data) != 2:
+        if len(
+            data
+        ) != 2:
             raise EOFError(
                 "Unexpected EOF "
                 "reading uint16."
@@ -581,7 +599,9 @@ class SprReader:
             4
         )
 
-        if len(data) != 4:
+        if len(
+            data
+        ) != 4:
             raise EOFError(
                 "Unexpected EOF "
                 "reading uint32."
@@ -618,10 +638,18 @@ def read_market(
     reader: Reader,
 ):
     return {
-        "category": reader.read_u16(),
-        "trade_as": reader.read_u16(),
-        "show_as": reader.read_u16(),
-        "name": reader.read_string(),
+        "category": (
+            reader.read_u16()
+        ),
+        "trade_as": (
+            reader.read_u16()
+        ),
+        "show_as": (
+            reader.read_u16()
+        ),
+        "name": (
+            reader.read_string()
+        ),
         "restrict_vocation": (
             reader.read_u16()
         ),
@@ -664,8 +692,10 @@ def read_attribute_payload(
         }
 
     if attribute == ATTR_MARKET:
-        return read_market(
-            reader
+        return (
+            read_market(
+                reader
+            )
         )
 
     return True
@@ -677,12 +707,6 @@ def read_attributes(
     thing_id: int,
 ):
     attributes = {}
-
-    raw_attributes = []
-
-    start_offset = (
-        reader.cursor
-    )
 
     while True:
         attribute_offset = (
@@ -734,40 +758,7 @@ def read_attributes(
             name
         ] = value
 
-        raw_attributes.append(
-            {
-                "offset": (
-                    attribute_offset
-                ),
-                "raw_id": (
-                    raw_attribute
-                ),
-                "id": (
-                    attribute
-                ),
-                "name": (
-                    name
-                ),
-                "value": (
-                    value
-                ),
-            }
-        )
-
-    return {
-        "start_offset": (
-            start_offset
-        ),
-        "end_offset": (
-            reader.cursor
-        ),
-        "values": (
-            attributes
-        ),
-        "raw": (
-            raw_attributes
-        ),
-    }
+    return attributes
 
 
 # ============================================================
@@ -1023,12 +1014,6 @@ def read_graphics(
         )
 
     return {
-        "offset": (
-            start_offset
-        ),
-        "end_offset": (
-            reader.cursor
-        ),
         "width": (
             width
         ),
@@ -1138,7 +1123,7 @@ def read_frame_groups(
 
 
 # ============================================================
-# DAT
+# DAT RECORDS
 # ============================================================
 
 
@@ -1148,10 +1133,6 @@ def read_record(
     thing_id: int,
     sprite_count_limit: int,
 ):
-    start_offset = (
-        reader.cursor
-    )
-
     attributes = (
         read_attributes(
             reader=reader,
@@ -1174,12 +1155,6 @@ def read_record(
             "id": thing_id,
             "category": (
                 category
-            ),
-            "offset": (
-                start_offset
-            ),
-            "end_offset": (
-                reader.cursor
             ),
             "attributes": (
                 attributes
@@ -1208,12 +1183,6 @@ def read_record(
         "category": (
             category
         ),
-        "offset": (
-            start_offset
-        ),
-        "end_offset": (
-            reader.cursor
-        ),
         "attributes": (
             attributes
         ),
@@ -1224,6 +1193,11 @@ def read_record(
             graphics
         ),
     }
+
+
+# ============================================================
+# DAT PARSER
+# ============================================================
 
 
 def parse_dat(
@@ -1356,13 +1330,16 @@ def parse_dat(
 
             step = (
                 1000
-                if category == "items"
+                if category
+                == "items"
                 else 100
             )
 
             if (
                 index % step
                 == 0
+                or index
+                == total
             ):
                 print(
                     f"  "
@@ -1383,26 +1360,7 @@ def parse_dat(
             f"EOF=0x{len(data):08X}"
         )
 
-    return {
-        "signature": (
-            signature
-        ),
-        "max_item_id": (
-            max_item_id
-        ),
-        "max_creature_id": (
-            max_creature_id
-        ),
-        "max_effect_id": (
-            max_effect_id
-        ),
-        "max_missile_id": (
-            max_missile_id
-        ),
-        "records": (
-            records
-        ),
-    }
+    return records
 
 
 # ============================================================
@@ -1478,8 +1436,6 @@ def get_record_name(
 ):
     attributes = record[
         "attributes"
-    ][
-        "values"
     ]
 
     market = attributes.get(
@@ -1529,14 +1485,10 @@ def build_asset_dir(
         )
 
     if category == "items":
-        attributes = record[
-            "attributes"
-        ][
-            "values"
-        ]
-
         item_type = classify_item(
-            attributes
+            record[
+                "attributes"
+            ]
         )
 
         return (
@@ -1706,262 +1658,54 @@ def export_record(
         )
     )
 
-    exported = 0
-
     if (
         record[
             "type"
         ]
         == "single"
     ):
-        exported = (
+        return export_graphics(
+            graphics=record[
+                "graphics"
+            ],
+            output_dir=asset_dir,
+            spr_reader=(
+                spr_reader
+            ),
+        )
+
+    exported = 0
+
+    for group in record[
+        "frame_groups"
+    ][
+        "groups"
+    ]:
+        group_dir = (
+            asset_dir
+            / (
+                f"group_"
+                f"{group['index']:02d}_"
+                f"type_"
+                f"{group['type']}"
+            )
+        )
+
+        exported += (
             export_graphics(
-                graphics=record[
+                graphics=group[
                     "graphics"
                 ],
-                output_dir=asset_dir,
+                output_dir=(
+                    group_dir
+                ),
                 spr_reader=(
                     spr_reader
                 ),
             )
         )
 
-    else:
-        for group in record[
-            "frame_groups"
-        ][
-            "groups"
-        ]:
-            group_dir = (
-                asset_dir
-                / (
-                    f"group_"
-                    f"{group['index']:02d}_"
-                    f"type_"
-                    f"{group['type']}"
-                )
-            )
-
-            exported += (
-                export_graphics(
-                    graphics=group[
-                        "graphics"
-                    ],
-                    output_dir=(
-                        group_dir
-                    ),
-                    spr_reader=(
-                        spr_reader
-                    ),
-                )
-            )
-
-    return (
-        exported,
-        asset_dir,
-    )
-
-
-# ============================================================
-# METADATA SERIALIZATION
-# ============================================================
-
-
-def clean_graphics_metadata(
-    graphics: dict,
-):
-    return {
-        "width": (
-            graphics[
-                "width"
-            ]
-        ),
-        "height": (
-            graphics[
-                "height"
-            ]
-        ),
-        "real_size": (
-            graphics[
-                "real_size"
-            ]
-        ),
-        "layers": (
-            graphics[
-                "layers"
-            ]
-        ),
-        "pattern_x": (
-            graphics[
-                "pattern_x"
-            ]
-        ),
-        "pattern_y": (
-            graphics[
-                "pattern_y"
-            ]
-        ),
-        "pattern_z": (
-            graphics[
-                "pattern_z"
-            ]
-        ),
-        "frames": (
-            graphics[
-                "frames"
-            ]
-        ),
-        "sprite_count": (
-            graphics[
-                "sprite_count"
-            ]
-        ),
-        "sprite_ids": (
-            graphics[
-                "sprite_ids"
-            ]
-        ),
-        "animator": (
-            graphics[
-                "animator"
-            ]
-        ),
-    }
-
-
-def build_record_metadata(
-    record: dict,
-    asset_dir: Path,
-    exported_pngs: int,
-):
-    name = (
-        get_record_name(
-            record
-        )
-    )
-
-    attributes = (
-        record[
-            "attributes"
-        ][
-            "values"
-        ]
-    )
-
-    metadata = {
-        "id": (
-            record[
-                "id"
-            ]
-        ),
-        "category": (
-            record[
-                "category"
-            ]
-        ),
-        "name": (
-            name
-        ),
-        "asset_path": (
-            relative_asset_path(
-                asset_dir
-            )
-        ),
-        "exported_pngs": (
-            exported_pngs
-        ),
-        "attributes": (
-            attributes
-        ),
-        "raw_attributes": (
-            record[
-                "attributes"
-            ][
-                "raw"
-            ]
-        ),
-        "dat": {
-            "offset": (
-                record[
-                    "offset"
-                ]
-            ),
-            "end_offset": (
-                record[
-                    "end_offset"
-                ]
-            ),
-            "record_type": (
-                record[
-                    "type"
-                ]
-            ),
-        },
-    }
-
-    if (
-        record[
-            "category"
-        ]
-        == "items"
-    ):
-        metadata[
-            "asset_type"
-        ] = classify_item(
-            attributes
-        )
-
-    if (
-        record[
-            "type"
-        ]
-        == "single"
-    ):
-        metadata[
-            "graphics"
-        ] = (
-            clean_graphics_metadata(
-                record[
-                    "graphics"
-                ]
-            )
-        )
-
-    else:
-        metadata[
-            "frame_groups"
-        ] = []
-
-        for group in record[
-            "frame_groups"
-        ][
-            "groups"
-        ]:
-            metadata[
-                "frame_groups"
-            ].append(
-                {
-                    "index": (
-                        group[
-                            "index"
-                        ]
-                    ),
-                    "type": (
-                        group[
-                            "type"
-                        ]
-                    ),
-                    "graphics": (
-                        clean_graphics_metadata(
-                            group[
-                                "graphics"
-                            ]
-                        )
-                    ),
-                }
-            )
-
-    return metadata
+    return exported
 
 
 # ============================================================
@@ -1970,16 +1714,9 @@ def build_record_metadata(
 
 
 def export_all(
-    parsed: dict,
+    records: dict,
     spr_reader: SprReader,
 ):
-    metadata_records = {
-        "items": [],
-        "creatures": [],
-        "effects": [],
-        "missiles": [],
-    }
-
     total_assets = 0
     exported_assets = 0
     total_pngs = 0
@@ -1992,11 +1729,11 @@ def export_all(
     ]
 
     for category in categories:
-        records = parsed[
-            "records"
-        ][
-            category
-        ]
+        category_records = (
+            records[
+                category
+            ]
+        )
 
         print()
         print(
@@ -2012,48 +1749,30 @@ def export_all(
         )
 
         total = len(
-            records
+            category_records
         )
 
         for index, record in enumerate(
-            records,
+            category_records,
             start=1,
         ):
             total_assets += 1
 
-            (
-                exported_pngs,
-                asset_dir,
-            ) = export_record(
-                record=record,
-                spr_reader=(
-                    spr_reader
-                ),
+            exported_pngs = (
+                export_record(
+                    record=record,
+                    spr_reader=(
+                        spr_reader
+                    ),
+                )
             )
 
             if exported_pngs > 0:
                 exported_assets += 1
+
                 total_pngs += (
                     exported_pngs
                 )
-
-            metadata = (
-                build_record_metadata(
-                    record=record,
-                    asset_dir=(
-                        asset_dir
-                    ),
-                    exported_pngs=(
-                        exported_pngs
-                    ),
-                )
-            )
-
-            metadata_records[
-                category
-            ].append(
-                metadata
-            )
 
             step = (
                 500
@@ -2065,7 +1784,8 @@ def export_all(
             if (
                 index % step
                 == 0
-                or index == total
+                or index
+                == total
             ):
                 print(
                     f"  "
@@ -2077,92 +1797,10 @@ def export_all(
                 )
 
     return (
-        metadata_records,
         total_assets,
         exported_assets,
         total_pngs,
     )
-
-
-# ============================================================
-# METADATA FILE
-# ============================================================
-
-
-def save_metadata(
-    parsed: dict,
-    metadata_records: dict,
-    spr_reader: SprReader,
-):
-    output = {
-        "version": (
-            "15.01"
-        ),
-        "dat_signature": (
-            f"0x"
-            f"{parsed['signature']:08X}"
-        ),
-        "spr_signature": (
-            f"0x"
-            f"{spr_reader.signature:08X}"
-        ),
-        "sprite_count": (
-            spr_reader.sprite_count
-        ),
-        "max_ids": {
-            "items": (
-                parsed[
-                    "max_item_id"
-                ]
-            ),
-            "creatures": (
-                parsed[
-                    "max_creature_id"
-                ]
-            ),
-            "effects": (
-                parsed[
-                    "max_effect_id"
-                ]
-            ),
-            "missiles": (
-                parsed[
-                    "max_missile_id"
-                ]
-            ),
-        },
-        "items": (
-            metadata_records[
-                "items"
-            ]
-        ),
-        "creatures": (
-            metadata_records[
-                "creatures"
-            ]
-        ),
-        "effects": (
-            metadata_records[
-                "effects"
-            ]
-        ),
-        "missiles": (
-            metadata_records[
-                "missiles"
-            ]
-        ),
-    }
-
-    with METADATA_PATH.open(
-        "w",
-        encoding="utf-8",
-    ) as file:
-        json.dump(
-            output,
-            file,
-            indent=2,
-            ensure_ascii=False,
-        )
 
 
 # ============================================================
@@ -2198,11 +1836,6 @@ def main():
         f"{OUTPUT_PATH.resolve()}"
     )
 
-    print(
-        f"Metadata: "
-        f"{METADATA_PATH.resolve()}"
-    )
-
     print()
 
     print(
@@ -2232,7 +1865,7 @@ def main():
         "Parsing DAT..."
     )
 
-    parsed = parse_dat(
+    records = parse_dat(
         sprite_count_limit=(
             spr_reader.sprite_count
         )
@@ -2243,6 +1876,19 @@ def main():
         "DAT parsed successfully "
         "to EOF."
     )
+
+    #
+    # Always regenerate assets from scratch.
+    #
+    if OUTPUT_PATH.exists():
+        print()
+        print(
+            "Removing previous assets..."
+        )
+
+        shutil.rmtree(
+            OUTPUT_PATH
+        )
 
     OUTPUT_PATH.mkdir(
         parents=True,
@@ -2255,27 +1901,11 @@ def main():
     )
 
     (
-        metadata_records,
         total_assets,
         exported_assets,
         total_pngs,
     ) = export_all(
-        parsed=parsed,
-        spr_reader=(
-            spr_reader
-        ),
-    )
-
-    print()
-    print(
-        "Saving metadata..."
-    )
-
-    save_metadata(
-        parsed=parsed,
-        metadata_records=(
-            metadata_records
-        ),
+        records=records,
         spr_reader=(
             spr_reader
         ),
@@ -2312,11 +1942,6 @@ def main():
     print(
         f"Assets path:      "
         f"{OUTPUT_PATH.resolve()}"
-    )
-
-    print(
-        f"Metadata:         "
-        f"{METADATA_PATH.resolve()}"
     )
 
 

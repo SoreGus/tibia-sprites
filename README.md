@@ -1,108 +1,122 @@
 # Tibia Assets Exporter
 
-Python scripts for extracting assets and metadata from Tibia `.dat` and `.spr` files.
+Python scripts for extracting and organizing assets from Tibia `.dat` and `.spr` files.
 
 ## Supported Versions
 
 - Tibia 7.41
 - Tibia 15.01
 
-Each version has its own parser due to differences between the DAT and SPR formats.
+Each version has its own parser due to differences between DAT and SPR formats.
 
 ## Structure
 
 ```text
 tibia-assets/
 ├── 741/
-│   ├── Tibia.dat
-│   ├── Tibia.spr
 │   ├── export.py
-│   ├── metadata.json
-│   └── assets/
+│   └── metadata.json
 ├── 1501/
-│   ├── Tibia.dat
-│   ├── Tibia.spr
 │   ├── export.py
-│   ├── metadata.json
-│   └── assets/
+│   ├── organize_assets.py
+│   ├── generate.py
+│   └── catalog.json
 ├── README.md
 └── requirements.txt
 ```
 
 ## Game Files
 
-The original Tibia files are **not included in this repository**:
+The original Tibia files are **not included**:
 
 ```text
 Tibia.dat
 Tibia.spr
 ```
 
-You must obtain these files separately and place them inside the corresponding version directory.
+Place them inside the corresponding version directory before running the exporter.
 
-The repository does not distribute copyrighted Tibia game data or assets.
+Generated assets are also not included in the repository.
 
 ## Requirements
 
 - Python 3
 - Pillow
 
-Install dependencies:
-
 ```bash
 pip install -r requirements.txt
 ```
 
-## Usage
-
-### Tibia 7.41
+## Tibia 7.41
 
 ```bash
 cd 741
 python export.py
 ```
 
-Exports:
+Exports items, creatures, effects, missiles and metadata to `assets/` and `metadata.json`.
 
-- Items
-- Creatures
-- Effects
-- Missiles
+## Tibia 15.01
 
-### Tibia 15.01
+Tibia 15.01 includes semantic organization based on `catalog.json`.
+
+Place:
+
+```text
+1501/
+├── Tibia.dat
+├── Tibia.spr
+├── export.py
+├── organize_assets.py
+├── generate.py
+└── catalog.json
+```
+
+Then run:
 
 ```bash
 cd 1501
-python export.py
+python generate.py
 ```
 
-Exports:
+The pipeline is:
 
-- Items
-- Creatures
-- Metadata
+```text
+Tibia.dat + Tibia.spr
+        ↓
+export.py
+        ↓
+raw assets/
+        ↓
+organize_assets.py + catalog.json
+        ↓
+assets/
+```
 
-## Output
+`generate.py` runs the complete process automatically and removes the temporary raw assets.
 
-Assets are exported to the `assets` directory and organized by category and DAT ID.
+The final assets are semantically organized into categories such as grounds, borders, brushes and tilesets.
 
-When a name is available, it is included in the directory name.
+Example:
 
 ```text
 assets/
-├── items/
-│   ├── 100/
-│   ├── 101_some_item/
-│   └── ...
-└── creatures/
-    ├── 1/
-    ├── 2/
-    └── ...
+└── grounds/
+    └── acid/
+        ├── acid_001.png
+        ├── acid_002.png
+        └── borders/
+            ├── acid_cne_001.png
+            ├── acid_cnw_001.png
+            ├── acid_n_001.png
+            └── ...
 ```
 
-For supported versions, `metadata.json` contains information extracted from the DAT and links each entry to its exported assets.
+Assets that cannot be reliably mapped are preserved as unclassified assets.
 
-The exporter supports:
+## Graphics Support
+
+The exporters support:
 
 - Multi-tile sprites
 - Patterns
@@ -110,5 +124,17 @@ The exporter supports:
 - Animation frames
 - Transparency
 - Frame groups
-- Metadata extraction
-- Version-specific DAT and SPR structures
+- Sprite composition
+- Version-specific DAT/SPR formats
+
+## Repository Policy
+
+The repository contains extraction scripts and supporting metadata, but does **not** distribute:
+
+```text
+Tibia.dat
+Tibia.spr
+assets/
+```
+
+These files must be obtained or generated separately.

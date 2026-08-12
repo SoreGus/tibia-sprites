@@ -13,6 +13,7 @@ __pycache__/
 # Generated assets
 741/assets/
 1501/assets/
+1501/organized_assets/
 
 # Tibia client data files
 741/Tibia.dat
@@ -20,4 +21,3 @@ __pycache__/
 
 1501/Tibia.dat
 1501/Tibia.spr
-1501/metadata.json
