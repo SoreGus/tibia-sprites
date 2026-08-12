@@ -1,0 +1,22 @@
+# Python virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# macOS
+.DS_Store
+
+# Generated assets
+741/assets/
+1501/assets/
+
+# Tibia client data files
+741/Tibia.dat
+741/Tibia.spr
+
+1501/Tibia.dat
+1501/Tibia.spr
