@@ -27,13 +27,6 @@ ORGANIZED_ASSETS_PATH = (
 )
 
 
-PRESERVED_CATEGORIES = [
-    "creatures",
-    "effects",
-    "missiles",
-]
-
-
 def run_script(
     script: Path,
 ):
@@ -52,45 +45,6 @@ def run_script(
         cwd=BASE_PATH,
         check=True,
     )
-
-
-def preserve_non_item_assets():
-    print()
-    print("=" * 72)
-    print("Preserving non-item assets")
-    print("=" * 72)
-
-    for category in PRESERVED_CATEGORIES:
-        source = (
-            RAW_ASSETS_PATH
-            / category
-        )
-
-        destination = (
-            ORGANIZED_ASSETS_PATH
-            / category
-        )
-
-        if not source.exists():
-            print(
-                f"{category}: not found"
-            )
-
-            continue
-
-        if destination.exists():
-            shutil.rmtree(
-                destination
-            )
-
-        shutil.copytree(
-            source,
-            destination,
-        )
-
-        print(
-            f"{category}: copied"
-        )
 
 
 def main():
@@ -125,7 +79,7 @@ def main():
         )
 
     #
-    # 2. Organize item assets.
+    # 2. Organize all assets.
     #
     run_script(
         ORGANIZE_SCRIPT
@@ -139,13 +93,7 @@ def main():
         )
 
     #
-    # 3. Preserve creatures, effects
-    # and missiles.
-    #
-    preserve_non_item_assets()
-
-    #
-    # 4. Remove raw assets.
+    # 3. Remove raw assets.
     #
     print()
     print("=" * 72)
@@ -157,7 +105,7 @@ def main():
     )
 
     #
-    # 5. Rename organized_assets -> assets.
+    # 4. Rename organized_assets -> assets.
     #
     ORGANIZED_ASSETS_PATH.rename(
         RAW_ASSETS_PATH
