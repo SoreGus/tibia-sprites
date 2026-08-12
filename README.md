@@ -1,6 +1,6 @@
 # Tibia Assets Exporter
 
-Python scripts for extracting assets from Tibia `.dat` and `.spr` files and exporting them as PNG images.
+Python scripts for extracting assets and metadata from Tibia `.dat` and `.spr` files.
 
 ## Supported Versions
 
@@ -16,16 +16,31 @@ tibia-assets/
 ├── 741/
 │   ├── Tibia.dat
 │   ├── Tibia.spr
-│   ├── export_assets.py
+│   ├── export.py
+│   ├── metadata.json
 │   └── assets/
 ├── 1501/
 │   ├── Tibia.dat
 │   ├── Tibia.spr
-│   ├── export_assets.py
+│   ├── export.py
+│   ├── metadata.json
 │   └── assets/
 ├── README.md
 └── requirements.txt
 ```
+
+## Game Files
+
+The original Tibia files are **not included in this repository**:
+
+```text
+Tibia.dat
+Tibia.spr
+```
+
+You must obtain these files separately and place them inside the corresponding version directory.
+
+The repository does not distribute copyrighted Tibia game data or assets.
 
 ## Requirements
 
@@ -44,7 +59,7 @@ pip install -r requirements.txt
 
 ```bash
 cd 741
-python export_assets.py
+python export.py
 ```
 
 Exports:
@@ -58,23 +73,26 @@ Exports:
 
 ```bash
 cd 1501
-python export_assets.py
+python export.py
 ```
 
 Exports:
 
 - Items
 - Creatures
+- Metadata
 
 ## Output
 
-Extracted assets are written to the `assets` directory and organized by category and DAT ID.
+Assets are exported to the `assets` directory and organized by category and DAT ID.
+
+When a name is available, it is included in the directory name.
 
 ```text
 assets/
 ├── items/
 │   ├── 100/
-│   ├── 101/
+│   ├── 101_some_item/
 │   └── ...
 └── creatures/
     ├── 1/
@@ -82,4 +100,15 @@ assets/
     └── ...
 ```
 
-The exporter supports multi-tile sprites, patterns, layers, animation frames, transparency, and version-specific DAT structures.
+For supported versions, `metadata.json` contains information extracted from the DAT and links each entry to its exported assets.
+
+The exporter supports:
+
+- Multi-tile sprites
+- Patterns
+- Layers
+- Animation frames
+- Transparency
+- Frame groups
+- Metadata extraction
+- Version-specific DAT and SPR structures
