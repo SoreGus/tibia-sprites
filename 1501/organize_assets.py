@@ -191,6 +191,66 @@ def get_source_pngs(
     )
 
 
+# Files emitted by the DAT/SPR extractor encode the complete sprite tensor.
+# Only ``frame`` is temporal.  The remaining coordinates select a static
+# variation (or a compositing layer) and must never be appended to a frame
+# sequence.
+RAW_FRAME_FILENAME = re.compile(
+    r"^frame_(?P<frame>\d+)_x_(?P<pattern_x>\d+)_"
+    r"y_(?P<pattern_y>\d+)_z_(?P<pattern_z>\d+)_"
+    r"layer_(?P<layer>\d+)\.png$",
+    re.IGNORECASE,
+)
+
+
+def get_raw_frame_coordinates(
+    source: Path,
+    fallback_index: int,
+):
+    match = RAW_FRAME_FILENAME.match(
+        source.name
+    )
+
+    if match:
+        data = {
+            name: int(value)
+            for name, value in match.groupdict().items()
+        }
+
+        data["raw_frame_file"] = True
+        return data
+
+    # A legacy/unlabelled PNG has no reliable temporal coordinate.  Keep it
+    # as an independent pattern instead of guessing that its position in a
+    # directory means an animation frame.
+    return {
+        "frame": 0,
+        "pattern_x": fallback_index,
+        "pattern_y": 0,
+        "pattern_z": 0,
+        "layer": 0,
+        "raw_frame_file": False,
+    }
+
+
+def frame_sort_key(
+    source: Path,
+):
+    coordinates = get_raw_frame_coordinates(
+        source,
+        0,
+    )
+
+    return (
+        coordinates["pattern_z"],
+        coordinates["pattern_y"],
+        coordinates["pattern_x"],
+        coordinates["layer"],
+        coordinates["frame"],
+        source.as_posix(),
+    )
+
+
 # ============================================================
 # JSON OUTPUT
 # ============================================================
@@ -366,6 +426,21 @@ def build_graphics_data(
                 "frames"
             ]
         ),
+
+        "frame_layout": {
+            "temporal_axis": "frame",
+            "variation_axes": [
+                "pattern_x",
+                "pattern_y",
+                "pattern_z",
+                "layer",
+            ],
+            "source_filename": (
+                "frame_{frame:03d}_x_{pattern_x:02d}_"
+                "y_{pattern_y:02d}_z_{pattern_z:02d}_"
+                "layer_{layer:02d}.png"
+            ),
+        },
     }
 
     animation = (
@@ -646,10 +721,11 @@ class AssetWriter:
         category: str,
         semantic: dict | None = None,
     ):
-        source_pngs = (
+        source_pngs = sorted(
             get_source_pngs(
                 source_directory
-            )
+            ),
+            key=frame_sort_key,
         )
 
         if not source_pngs:
@@ -657,19 +733,25 @@ class AssetWriter:
 
         written = 0
 
-        for source_png in source_pngs:
-            filename = (
-                self.next_filename(
-                    directory=(
-                        destination_directory
-                    ),
-                    prefix=prefix,
-                )
+        for index, source_png in enumerate(source_pngs):
+            coordinates = get_raw_frame_coordinates(
+                source_png,
+                index,
             )
 
+            # A sequence lives below one exact pattern/layer tuple.  Thus an
+            # edge such as "east" with several patterns cannot accidentally
+            # become one long e_001, e_002, ... animation.
             destination = (
                 destination_directory
-                / filename
+                / f"pattern_x_{coordinates['pattern_x']:02d}"
+                / f"pattern_y_{coordinates['pattern_y']:02d}"
+                / f"pattern_z_{coordinates['pattern_z']:02d}"
+                / f"layer_{coordinates['layer']:02d}"
+                / (
+                    f"{prefix}_"
+                    f"frame_{coordinates['frame']:03d}.png"
+                )
             )
 
             self.write_file(
@@ -703,7 +785,15 @@ class AssetWriter:
 
                 destination=destination,
 
-                semantic=semantic,
+                semantic={
+                    **(semantic or {}),
+                    "frame": coordinates["frame"],
+                    "pattern_x": coordinates["pattern_x"],
+                    "pattern_y": coordinates["pattern_y"],
+                    "pattern_z": coordinates["pattern_z"],
+                    "layer": coordinates["layer"],
+                    "raw_frame_file": coordinates["raw_frame_file"],
+                },
             )
 
             written += 1
@@ -1755,6 +1845,71 @@ def get_family_directory_from_record(
     return destination.parent
 
 
+def build_variant_file_layout(
+    records: list,
+    item_id: int,
+):
+    """Describe the exported DAT tensor without flattening it into frames."""
+    files = []
+
+    for record in records:
+        if int(record["item_id"]) != item_id:
+            continue
+
+        semantic = record.get("semantic") or {}
+
+        if "frame" not in semantic:
+            continue
+
+        destination = Path(record["destination"])
+        variant_marker = ("variants", str(item_id))
+        path_parts = destination.parts
+
+        try:
+            marker_index = next(
+                index
+                for index in range(len(path_parts) - 1)
+                if path_parts[index:index + 2] == variant_marker
+            )
+            relative_path = Path(
+                *path_parts[marker_index + 2:]
+            ).as_posix()
+        except StopIteration:
+            relative_path = destination.name
+
+        files.append(
+            {
+                "frame": semantic["frame"],
+                "pattern_x": semantic["pattern_x"],
+                "pattern_y": semantic["pattern_y"],
+                "pattern_z": semantic["pattern_z"],
+                "layer": semantic["layer"],
+                "path": relative_path,
+            }
+        )
+
+    files.sort(
+        key=lambda entry: (
+            entry["pattern_z"],
+            entry["pattern_y"],
+            entry["pattern_x"],
+            entry["layer"],
+            entry["frame"],
+        )
+    )
+
+    return {
+        "temporal_axis": "frame",
+        "variation_axes": [
+            "pattern_x",
+            "pattern_y",
+            "pattern_z",
+            "layer",
+        ],
+        "files": files,
+    }
+
+
 def write_item_asset_metadata(
     writer: AssetWriter,
     item_record_by_id: dict,
@@ -1928,6 +2083,11 @@ def write_item_asset_metadata(
                 )
             )
 
+            variant["exported_files"] = build_variant_file_layout(
+                records,
+                item_id,
+            )
+
             variants.append(
                 variant
             )
@@ -1964,6 +2124,11 @@ def write_item_asset_metadata(
                 build_graphics_data(
                     graphics
                 )
+            )
+
+            variant_data["exported_files"] = build_variant_file_layout(
+                records,
+                item_id,
             )
 
             write_asset_json(
@@ -3673,6 +3838,20 @@ def write_manifest(
     manifest = {
         "version": "15.01",
 
+        "item_frame_schema": {
+            "temporal_axis": "frame",
+            "variation_axes": [
+                "pattern_x",
+                "pattern_y",
+                "pattern_z",
+                "layer",
+            ],
+            "rule": (
+                "Only frame is an animation sequence. Patterns and layers "
+                "are independent static variations."
+            ),
+        },
+
         "copy_mode": (
             COPY_MODE
         ),
@@ -3898,6 +4077,75 @@ def validate_item_variant_isolation(
         "WARNING: some animation directories "
         "still contain multiple DAT IDs."
     )
+
+    return False
+
+
+def validate_item_frame_tensor(
+    writer: AssetWriter,
+    item_record_by_id: dict,
+):
+    """Verify that every exported item keeps frames within one variation."""
+    groups = defaultdict(list)
+
+    for record in writer.records:
+        semantic = record.get("semantic") or {}
+
+        required_coordinates = {
+            "frame",
+            "pattern_x",
+            "pattern_y",
+            "pattern_z",
+            "layer",
+        }
+
+        # Creature/runtime records have their own direction/frame layout and
+        # intentionally do not carry the item-pattern axes.
+        if not required_coordinates.issubset(semantic):
+            continue
+
+        key = (
+            int(record["item_id"]),
+            semantic["pattern_x"],
+            semantic["pattern_y"],
+            semantic["pattern_z"],
+            semantic["layer"],
+        )
+        groups[key].append(semantic["frame"])
+
+    invalid = []
+
+    for key, frames in groups.items():
+        graphics = (item_record_by_id.get(key[0]) or {}).get("graphics") or {}
+        expected_frames = graphics.get("frames")
+
+        if expected_frames is None:
+            continue
+
+        actual = sorted(set(frames))
+        expected = list(range(expected_frames))
+
+        if actual != expected:
+            invalid.append((key, actual, expected))
+
+    print()
+    print("=" * 72)
+    print("ITEM FRAME TENSOR VALIDATION")
+    print("=" * 72)
+
+    if not invalid:
+        print(
+            "SUCCESS: frames are isolated by pattern_x, pattern_y, "
+            "pattern_z and layer."
+        )
+        return True
+
+    for key, actual, expected in invalid:
+        print(
+            f"INVALID: item {key[0]}, x={key[1]}, y={key[2]}, "
+            f"z={key[3]}, layer={key[4]} -> frames {actual}; "
+            f"expected {expected}"
+        )
 
     return False
 
@@ -4147,6 +4395,17 @@ def main():
     statistics[
         "item_variant_isolation_validation"
     ] = variant_validation
+
+    frame_tensor_validation = (
+        validate_item_frame_tensor(
+            writer,
+            item_record_by_id,
+        )
+    )
+
+    statistics[
+        "item_frame_tensor_validation"
+    ] = frame_tensor_validation
 
     creature_validation = (
         validate_demon_output()
