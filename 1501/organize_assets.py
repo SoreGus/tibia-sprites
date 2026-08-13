@@ -961,25 +961,18 @@ def get_variant_directory(
     item_id: int,
 ):
     """
-    A semantic family can contain several DAT objects.
+    Return the temporary export location for one DAT object.
 
-    Those DAT objects MUST NOT share the same physical
-    animation directory.
-
-    Example:
-
-        grounds/sea/
-            variants/
-                4608/
-                4609/
-
-    This prevents unrelated Sea graphics from being
-    interpreted as frames of one animation.
+    The final layout is selected after all records in a semantic family are
+    known: a sole variant is placed directly in the family directory, while
+    families with multiple variants use an ``<item id>/`` directory.  Keeping
+    the initial exports isolated here prevents two DAT objects from ever
+    sharing a staging directory.
     """
 
     return (
         family_directory
-        / "variants"
+        / ".variants_staging"
         / str(
             item_id
         )
@@ -1845,9 +1838,101 @@ def get_family_directory_from_record(
     return destination.parent
 
 
+def normalize_item_variant_layout(
+    writer: AssetWriter,
+):
+    """Flatten item exports into the public, human-oriented asset layout.
+
+    A family with one DAT object is represented directly by its family
+    directory.  A family with several DAT objects receives one directory per
+    DAT id.  The DAT tensor coordinates remain in the record and asset JSON;
+    they are deliberately not encoded in directory names or PNG filenames.
+    """
+    families = defaultdict(list)
+
+    for record in writer.records:
+        family = (record.get("semantic") or {}).get("family_directory")
+
+        if family and "frame" in (record.get("semantic") or {}):
+            families[family].append(record)
+
+    for family, records in families.items():
+        variant_ids = sorted({int(record["item_id"]) for record in records})
+        has_multiple_variants = len(variant_ids) > 1
+        family_directory = BASE_PATH / family
+
+        records.sort(
+            key=lambda record: (
+                int(record["item_id"]),
+                (record.get("semantic") or {}).get("pattern_z", 0),
+                (record.get("semantic") or {}).get("pattern_y", 0),
+                (record.get("semantic") or {}).get("pattern_x", 0),
+                (record.get("semantic") or {}).get("layer", 0),
+                (record.get("semantic") or {}).get("frame", 0),
+            )
+        )
+
+        file_index_by_variant = defaultdict(int)
+        normalized_destinations = {}
+
+        for record in records:
+            item_id = int(record["item_id"])
+            source = BASE_PATH / record["destination"]
+            source_key = (item_id, source)
+
+            # A DAT object can be associated with the same semantic family
+            # more than once (for example through duplicate border metadata).
+            # Such records reference one physical staging PNG, so they must
+            # share one normalized filename instead of attempting to move it
+            # once per record.
+            existing_destination = normalized_destinations.get(source_key)
+
+            if existing_destination is not None:
+                record["destination"] = relative_to_base(existing_destination)
+                continue
+
+            file_index = file_index_by_variant[item_id]
+            file_index_by_variant[item_id] += 1
+
+            destination_directory = family_directory
+
+            if has_multiple_variants:
+                destination_directory /= str(item_id)
+
+            destination = destination_directory / f"{file_index}.png"
+
+            ensure_directory(destination.parent)
+
+            if source != destination:
+                if destination.exists():
+                    destination.unlink()
+
+                source.rename(destination)
+
+            normalized_destinations[source_key] = destination
+            record["destination"] = relative_to_base(destination)
+
+        staging_directory = family_directory / ".variants_staging"
+
+        if staging_directory.exists():
+            shutil.rmtree(staging_directory)
+
+
+def get_variant_asset_directory(
+    family_directory: Path,
+    item_id: int,
+    variant_count: int,
+):
+    if variant_count == 1:
+        return family_directory
+
+    return family_directory / str(item_id)
+
+
 def build_variant_file_layout(
     records: list,
     item_id: int,
+    variant_directory: Path,
 ):
     """Describe the exported DAT tensor without flattening it into frames."""
     files = []
@@ -1861,21 +1946,8 @@ def build_variant_file_layout(
         if "frame" not in semantic:
             continue
 
-        destination = Path(record["destination"])
-        variant_marker = ("variants", str(item_id))
-        path_parts = destination.parts
-
-        try:
-            marker_index = next(
-                index
-                for index in range(len(path_parts) - 1)
-                if path_parts[index:index + 2] == variant_marker
-            )
-            relative_path = Path(
-                *path_parts[marker_index + 2:]
-            ).as_posix()
-        except StopIteration:
-            relative_path = destination.name
+        destination = BASE_PATH / record["destination"]
+        relative_path = destination.relative_to(variant_directory).as_posix()
 
         files.append(
             {
@@ -1917,17 +1989,9 @@ def write_item_asset_metadata(
     """
     Write metadata at the semantic family level.
 
-    Important:
-        variants are separate DAT objects.
-
-    Therefore:
-
-        grounds/sea/asset.json
-
-    describes all Sea variants, while each physical DAT object
-    remains isolated under:
-
-        grounds/sea/variants/<DAT ID>/
+    Variants are separate DAT objects.  A family with one variant keeps its
+    PNGs and metadata at the family root; a multi-variant family keeps each
+    DAT object under its numeric ID.
     """
 
     families = defaultdict(
@@ -2019,6 +2083,7 @@ def write_item_asset_metadata(
         )
 
         variants = []
+        variant_count = len(ids)
 
         for item_id in ids:
             dat_record = (
@@ -2072,10 +2137,17 @@ def write_item_asset_metadata(
                 ),
 
                 "path": (
-                    f"variants/"
-                    f"{item_id}"
+                    "."
+                    if variant_count == 1
+                    else str(item_id)
                 ),
             }
+
+            variant_directory = get_variant_asset_directory(
+                family_directory=family_directory,
+                item_id=item_id,
+                variant_count=variant_count,
+            )
 
             variant.update(
                 build_graphics_data(
@@ -2086,6 +2158,7 @@ def write_item_asset_metadata(
             variant["exported_files"] = build_variant_file_layout(
                 records,
                 item_id,
+                variant_directory,
             )
 
             variants.append(
@@ -2129,18 +2202,14 @@ def write_item_asset_metadata(
             variant_data["exported_files"] = build_variant_file_layout(
                 records,
                 item_id,
+                variant_directory,
             )
 
-            write_asset_json(
-                destination=(
-                    family_directory
-                    / "variants"
-                    / str(
-                        item_id
-                    )
-                ),
-                data=variant_data,
-            )
+            if variant_count > 1:
+                write_asset_json(
+                    destination=variant_directory,
+                    data=variant_data,
+                )
 
             written += 1
 
@@ -4352,6 +4421,13 @@ def main():
             catalog
         )
     )
+
+    print()
+    print(
+        "Normalizing item variant layout..."
+    )
+
+    normalize_item_variant_layout(writer)
 
     print()
     print(
